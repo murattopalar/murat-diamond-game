@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Mario Tarzı Elmas Oyunu</title>
+  <style>
+    html, body { margin:0; padding:0; background:#111; }
+    canvas { display:block; margin:0 auto; background:#0b0f1a; }
+    .hud { position:fixed; top:12px; left:12px; color:#fff; font:14px/1.3 system-ui; }
+    .hint { opacity:.8; margin-top:6px; font-size:12px; }
+  </style>
+</head>
+<body>
+  <div class="hud">
+    Skor: <span id="score">0</span> | Can: <span id="lives">3</span>
+    <div class="hint">Kontrol: ← → , Space (Zıpla). Elmasları topla, kırmızı engellere çarpma.</div>
+  </div>
+  <canvas id="game" width="960" height="540"></canvas>
+
+<script>
+(() => {
+  const canvas = document.getElementById("game");
+  const ctx = canvas.getContext("2d");
+  const hudScore = document.getElementById("score");
+  const hudLives = document.getElementById("lives");
+
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const aabb = (A, B) =>
+    A.x < B.x + B.w && A.x + A.w > B.x &&
+    A.y < B.y + B.h && A.y + A.h > B.y;
+
+  const state = { score:0, lives:3, gravity:1600, friction:0.86, time:0, cameraX:0 };
+  const keys = { left:false, right:false, jump:false };
+  addEventListener("keydown", (e)=>{ if(e.code==="ArrowLeft")keys.left=true; if(e.code==="ArrowRight")keys.right=true; if(e.code==="Space")keys.jump=true; });
+  addEventListener("keyup",   (e)=>{ if(e.code==="ArrowLeft")keys.left=false; if(e.code==="ArrowRight")keys.right=false; if(e.code==="Space")keys.jump=false; });
+
+  const world = {
+    floorY: 480,
+    platforms: [],
+    diamonds: [],
+    hazards: [],
+    spawn() {
+      this.platforms = [
+        { x: 0,   y: this.floorY, w: 2200, h: 80 },
+        { x: 240, y: 380, w: 140, h: 18 },
+        { x: 430, y: 320, w: 160, h: 18 },
+        { x: 650, y: 260, w: 160, h: 18 },
+        { x: 860, y: 340, w: 140, h: 18 },
+        { x: 1040,y: 300, w: 170, h: 18 },
+        { x: 1280,y: 240, w: 170, h: 18 },
+        { x: 1540,y: 320, w: 170, h: 18 },
+        { x: 1780,y: 280, w: 170, h: 18 },
+      ];
+      this.diamonds = [
+        { x: 280, y: 340, w: 18, h: 18, taken:false },
+        { x: 470, y: 280, w: 18, h: 18, taken:false },
+        { x: 700, y: 220, w: 18, h: 18, taken:false },
+        { x: 900, y: 300, w: 18, h: 18, taken:false },
+        { x: 1100,y: 260, w: 18, h: 18, taken:false },
+        { x: 1320,y: 200, w: 18, h: 18, taken:false },
+        { x: 1580,y: 280, w: 18, h: 18, taken:false },
+        { x: 1820,y: 240, w: 18, h: 18, taken:false },
+      ];
+      this.hazards = [
+        { x: 520, y: this.floorY-20, w: 26, h: 20 },
+        { x: 980, y: this.floorY-20, w: 26, h: 20 },
+        { x: 1460,y: this.floorY-20, w: 26, h: 20 },
+      ];
+    }
+  };
+
+  const player = {
+    x:80, y:200, w:32, h:44, vx:0, vy:0,
+    speed:520, jumpV:-720, onGround:false, hurtCooldown:0,
+    reset(){ this.x=80; this.y=200; this.vx=0; this.vy=0; this.onGround=false; this.hurtCooldown=0; state.cameraX=0; }
+  };
+
+  function updateHud(){ hudScore.textContent=String(state.score); hudLives.textContent=String(state.lives); }
+  function resetAll(){ state.score=0; state.lives=3; world.spawn(); player.reset(); updateHud(); }
+  function takeDamage(){
+    if(player.hurtCooldown>0) return;
+    state.lives -= 1;
+    player.hurtCooldown = 1.0;
+    updateHud();
+    if(state.lives<=0){ alert("Oyun bitti! Skor: "+state.score); resetAll(); }
+  }
+
+  function moveAndCollide(dt){
+    if(keys.left) player.vx = -player.speed;
+    else if(keys.right) player.vx = player.speed;
+    else player.vx *= state.friction;
+
+    if(keys.jump && player.onGround){ player.vy = player.jumpV; player.onGround=false; }
+
+    player.vy += state.gravity * dt;
+
+    player.x += player.vx * dt;
+    player.y += player.vy * dt;
+
+    player.onGround = false;
+
+    for(const p of world.platforms){
+      if(!aabb(player,p)) continue;
+      const prevY = player.y - player.vy*dt;
+      if(prevY + player.h <= p.y + 2 && player.vy>=0){
+        player.y = p.y - player.h; player.vy=0; player.onGround=true;
+      } else {
+        const prevX = player.x - player.vx*dt;
+        if(prevX + player.w <= p.x + 2) player.x = p.x - player.w;
+        else if(prevX >= p.x + p.w - 2) player.x = p.x + p.w;
+        if(prevY >= p.y + p.h - 2 && player.vy<0){ player.y = p.y+p.h; player.vy=0; }
+      }
+    }
+
+    player.x = clamp(player.x, 0, 2200-player.w);
+    if(player.y > canvas.height + 200){ takeDamage(); player.reset(); }
+  }
+
+  function updateCamera(){
+    const target = player.x - canvas.width*0.45;
+    state.cameraX = clamp(target, 0, 2200-canvas.width);
+  }
+
+  function update(dt){
+    state.time += dt;
+    if(player.hurtCooldown>0) player.hurtCooldown -= dt;
+
+    moveAndCollide(dt);
+    updateCamera();
+
+    for(const d of world.diamonds){
+      if(d.taken) continue;
+      if(aabb(player,d)){ d.taken=true; state.score += 10; updateHud(); }
+    }
+    for(const h of world.hazards){
+      if(aabb(player,h)) takeDamage();
+    }
+    if(world.diamonds.every(d=>d.taken)){ alert("Seviye tamam! Skor: "+state.score); resetAll(); }
+  }
+
+  function draw(){
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    ctx.fillStyle="#0b0f1a"; ctx.fillRect(0,0,canvas.width,canvas.height);
+
+    ctx.fillStyle="rgba(255,255,255,0.06)";
+    for(let i=0;i<60;i++){
+      const x = (i*173 - (state.cameraX*0.3)) % (canvas.width+200);
+      const y = (i*97) % canvas.height;
+      ctx.fillRect(x,y,2,2);
+    }
+
+    ctx.save();
+    ctx.translate(-state.cameraX, 0);
+
+    for(const p of world.platforms){
+      ctx.fillStyle = (p.y>=world.floorY) ? "#1c2b3a" : "#223a55";
+      ctx.fillRect(p.x,p.y,p.w,p.h);
+      ctx.fillStyle="rgba(255,255,255,0.08)";
+      ctx.fillRect(p.x,p.y,p.w,3);
+    }
+
+    for(const d of world.diamonds){
+      if(d.taken) continue;
+      ctx.fillStyle="#4dd4ff";
+      ctx.beginPath();
+      ctx.moveTo(d.x+d.w/2, d.y);
+      ctx.lineTo(d.x+d.w, d.y+d.h/2);
+      ctx.lineTo(d.x+d.w/2, d.y+d.h);
+      ctx.lineTo(d.x, d.y+d.h/2);
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    for(const h of world.hazards){
+      ctx.fillStyle="#ff4d4d";
+      ctx.fillRect(h.x,h.y,h.w,h.h);
+    }
+
+    const blink = (player.hurtCooldown>0) ? (Math.floor(state.time*20)%2===0) : true;
+    if(blink){
+      ctx.fillStyle="#ffd166";
+      ctx.fillRect(player.x,player.y,player.w,player.h);
+      ctx.fillStyle="rgba(0,0,0,0.25)";
+      ctx.fillRect(player.x+6, player.y+10, 6, 6);
+      ctx.fillRect(player.x+20,player.y+10, 6, 6);
+    }
+
+    ctx.restore();
+  }
+
+  let last = performance.now();
+  function loop(now){
+    const dt = Math.min(0.033, (now-last)/1000);
+    last = now;
+    update(dt);
+    draw();
+    requestAnimationFrame(loop);
+  }
+
+  resetAll();
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
